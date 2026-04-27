@@ -1,4 +1,4 @@
-name: Build A205 Kernel (AnyKernel3)
+name: Build A205 Kernel (Standalone)
 
 on:
   workflow_dispatch:
@@ -9,24 +9,17 @@ jobs:
     timeout-minutes: 60
 
     env:
-      BUILD_NO: "1"   # non-interactive mode
-      BOT_TOKEN: "1"  # bypass script check
-      CHAT_ID: "0"
-      SCHEDULER: "HMP"
-
       ARCH: arm64
-      KBUILD_BUILD_USER: CI
-      KBUILD_BUILD_HOST: GitHub
 
     steps:
       # -----------------------------
-      # 📥 Checkout
+      # 📥 Checkout source
       # -----------------------------
-      - name: Checkout source
+      - name: Checkout
         uses: actions/checkout@v4
 
       # -----------------------------
-      # 🧰 Dependencies
+      # 🧰 Install dependencies
       # -----------------------------
       - name: Install dependencies
         run: |
@@ -37,66 +30,75 @@ jobs:
             libncursesw5-dev unzip python3
 
       # -----------------------------
-      # ⚡ Cache toolchain
-      # -----------------------------
-      - name: Cache clang
-        uses: actions/cache@v4
-        with:
-          path: toolchain
-          key: proton-clang-14
-
-      # -----------------------------
-      # 🔧 Setup Proton Clang 14
+      # 🔧 Clone Proton Clang 14
       # -----------------------------
       - name: Setup toolchain
         run: |
-          if [ ! -d "toolchain" ]; then
-            git clone --depth=1 https://github.com/kdrag0n/proton-clang.git toolchain
-          fi
-
-          cd toolchain/bin
-          ln -sf clang clang-14
+          git clone --depth=1 https://github.com/kdrag0n/proton-clang.git toolchain
+          echo "PATH=$(pwd)/toolchain/bin:$PATH" >> $GITHUB_ENV
 
       # -----------------------------
-      # ⚙️ Export PATH
+      # ⚙️ Kernel config (A205)
       # -----------------------------
-      - name: Export PATH
-        run: echo "PATH=$(pwd)/toolchain/bin:$PATH" >> $GITHUB_ENV
-
-      # -----------------------------
-      # 🧠 Patch build script (A205 only)
-      # -----------------------------
-      - name: Limit build to A205
+      - name: Configure kernel
         run: |
-          chmod +x build.sh
-
-          # Remove other devices
-          sed -i '/SM_A105X/,+1d' build.sh
-          sed -i '/SM_A202X/,+1d' build.sh
-          sed -i '/SM_A305X/,+1d' build.sh
-          sed -i '/SM_A307X/,+1d' build.sh
-          sed -i '/SM_A405X/,+1d' build.sh
+          make O=out ARCH=arm64 exynos7885-a20_defconfig
 
       # -----------------------------
-      # 🏗️ Build kernel (auto mode)
+      # 🏗️ Build kernel
       # -----------------------------
-      - name: Build
+      - name: Build kernel
         run: |
-          ./build.sh auto hmp
+          make -j$(nproc) O=out \
+            ARCH=arm64 \
+            CC=clang \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
       # -----------------------------
-      # 📦 Collect ONLY AnyKernel zip
+      # 📦 Prepare AnyKernel3
       # -----------------------------
-      - name: Collect AnyKernel zip
+      - name: Prepare AnyKernel
+        run: |
+          mkdir -p AnyKernel
+
+          # Copy your AnyKernel3 base files
+          cp -r kernel_zip/anykernel/* AnyKernel/
+
+          # Copy compiled images
+          cp out/arch/arm64/boot/Image AnyKernel/
+          cp out/arch/arm64/boot/dtb.img AnyKernel/ || true
+
+          # Use prebuilt dtbo (A205)
+          cp kernel_zip/dtbo/a20/dtbo.img AnyKernel/dtbo.img || true
+
+      # -----------------------------
+      # 🗜️ Create flashable zip
+      # -----------------------------
+      - name: Build AnyKernel zip
+        run: |
+          cd AnyKernel
+          ZIPNAME="A205-Kernel-$(date +%Y%m%d).zip"
+
+          zip -r9 $ZIPNAME * -x "*.git*" "*.github*"
+
+          echo "ZIPNAME=$ZIPNAME" >> $GITHUB_ENV
+
+      # -----------------------------
+      # 📤 Move output
+      # -----------------------------
+      - name: Collect zip
         run: |
           mkdir -p output
-          find kernel_zip/anykernel -name "*.zip" -exec cp {} output/ \; || true
+          cp AnyKernel/${ZIPNAME} output/
 
       # -----------------------------
-      # ⬆️ Upload flashable zip
+      # ⬆️ Upload artifact
       # -----------------------------
-      - name: Upload AnyKernel3 Zip
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: A205-Kernel-AnyKernel3
+          name: A205-Kernel
           path: output/*
