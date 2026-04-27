@@ -1,0 +1,102 @@
+name: Build A205 Kernel (AnyKernel3)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    env:
+      BUILD_NO: "1"   # non-interactive mode
+      BOT_TOKEN: "1"  # bypass script check
+      CHAT_ID: "0"
+      SCHEDULER: "HMP"
+
+      ARCH: arm64
+      KBUILD_BUILD_USER: CI
+      KBUILD_BUILD_HOST: GitHub
+
+    steps:
+      # -----------------------------
+      # 📥 Checkout
+      # -----------------------------
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      # -----------------------------
+      # 🧰 Dependencies
+      # -----------------------------
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            git bc bison flex zip curl \
+            libssl-dev libncurses5-dev \
+            libncursesw5-dev unzip python3
+
+      # -----------------------------
+      # ⚡ Cache toolchain
+      # -----------------------------
+      - name: Cache clang
+        uses: actions/cache@v4
+        with:
+          path: toolchain
+          key: proton-clang-14
+
+      # -----------------------------
+      # 🔧 Setup Proton Clang 14
+      # -----------------------------
+      - name: Setup toolchain
+        run: |
+          if [ ! -d "toolchain" ]; then
+            git clone --depth=1 https://github.com/kdrag0n/proton-clang.git toolchain
+          fi
+
+          cd toolchain/bin
+          ln -sf clang clang-14
+
+      # -----------------------------
+      # ⚙️ Export PATH
+      # -----------------------------
+      - name: Export PATH
+        run: echo "PATH=$(pwd)/toolchain/bin:$PATH" >> $GITHUB_ENV
+
+      # -----------------------------
+      # 🧠 Patch build script (A205 only)
+      # -----------------------------
+      - name: Limit build to A205
+        run: |
+          chmod +x build.sh
+
+          # Remove other devices
+          sed -i '/SM_A105X/,+1d' build.sh
+          sed -i '/SM_A202X/,+1d' build.sh
+          sed -i '/SM_A305X/,+1d' build.sh
+          sed -i '/SM_A307X/,+1d' build.sh
+          sed -i '/SM_A405X/,+1d' build.sh
+
+      # -----------------------------
+      # 🏗️ Build kernel (auto mode)
+      # -----------------------------
+      - name: Build
+        run: |
+          ./build.sh auto hmp
+
+      # -----------------------------
+      # 📦 Collect ONLY AnyKernel zip
+      # -----------------------------
+      - name: Collect AnyKernel zip
+        run: |
+          mkdir -p output
+          find kernel_zip/anykernel -name "*.zip" -exec cp {} output/ \; || true
+
+      # -----------------------------
+      # ⬆️ Upload flashable zip
+      # -----------------------------
+      - name: Upload AnyKernel3 Zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: A205-Kernel-AnyKernel3
+          path: output/*
